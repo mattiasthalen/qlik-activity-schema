@@ -1,0 +1,90 @@
+[stream]:
+Load
+	[activity_id]
+,	Timestamp([ts])	As [ts]
+,	[entity_id]
+,	[activity]
+,	[anonymous_entity_id]
+,	[feature_json]
+,	[revenue_impact]
+,	[link]
+,	Hash256([feature_json])	As [_hk__feature_json]
+
+From
+	[lib://DataFiles/northwind__customer_stream.xlsx] (ooxml, embedded labels, table is Blad1)
+;
+
+// Generate a table for each activity
+For iter__activity = 1 To FieldValueCount('activity')
+	Let val__activity	= FieldValue('activity', $(iter__activity));
+    
+    // Load only the activity data
+    [tmp__$(val__activity)]:
+    NoConcatenate
+    Load
+    	*
+    Resident
+    	[stream]
+    
+    Where
+    	[activity] = '$(val__activity)'
+    ;
+    
+    // Add the activity key to the stream
+    Left Join([stream])
+    Load
+    	[_hk__feature_json]
+	,	[_hk__feature_json]	As [_hk__$(val__activity)]
+    
+    Resident
+    	[tmp__$(val__activity)]
+    ;
+
+	// Extract all the features of the activity
+	[features__$(val__activity)]:
+	Load Distinct
+		[_hk__feature_json]
+	,	Replace(SubField([features__kvp], ':', 1), '"', '')	As [features__key]
+	,	Replace(SubField([features__kvp], ':', 2), '"', '')	As [features__value]
+	;
+
+	Load
+		[_hk__feature_json]
+	,	SubField(Replace(Replace([feature_json], '{', ''), '}', ''), ',"')	As [features__kvp]
+
+	Resident
+		[tmp__$(val__activity)]
+	;
+
+	// Generate the load expression
+	Let val__load_exp	= '[_hk__feature_json] As [_hk__$(val__activity)]';
+
+	For iter__feature = 1 To FieldValueCount('features__key')
+		Let val__feature	= FieldValue('features__key', $(iter__feature));
+	    Let val__load_exp	= '$(val__load_exp), JsonGet([feature_json], ' & Chr(39) & '/$(val__feature)' & Chr(39) & ') As [$(val__feature)__$(val__activity)]';
+		Let val__feature	= Null();
+        
+	Next iter__feature
+	Let iter__feature	= Null();
+
+	Drop Table [features__$(val__activity)];
+
+	// Create the final activity table
+	[activity__$(val__activity)]:
+    NoConcatenate
+    Load Distinct
+    	$(val__load_exp)
+        
+    Resident
+    	[tmp__$(val__activity)]
+    ;
+    
+    Drop Table [tmp__$(val__activity)];
+    
+    Let val__load_exp	= Null();
+    Let val__activity	= Null();
+    
+Next iter__activity
+Let iter__activity	= Null();
+
+Drop Field [_hk__feature_json] From [stream];
